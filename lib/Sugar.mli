@@ -13,9 +13,12 @@ open Migrate_ast
 open Asttypes
 open Extended_ast
 
-val check_local_attr : attributes -> attributes * bool
-(** [check_local_attr attrs] returns the input list with any local attributes
-    removed, and a bool if there was a local. *)
+val decompose_arrow :
+  Ast.t -> arrow_param list -> core_type -> (arrow_param * bool) list * Ast.t
+(** [decompose_arrow ctl ct2] returns a list of arrow params, where the last is
+    a dummy param corresponding to ct2 (the return type) and a bool indicating
+    the presence of a local attribute (which has been removed).  The returned
+    Ast.t is a ctx that has similarly been updated to remove the attributes *)
 
 val or_pat :
   ?allow_attribute:bool -> Cmts.t -> pattern Ast.xt -> pattern Ast.xt list
@@ -107,6 +110,7 @@ module Let_binding : sig
     ; lb_exp: expression Ast.xt
     ; lb_pun: bool
     ; lb_attrs: attribute list
+    ; lb_local: bool
     ; lb_loc: Location.t }
 
   val of_value_binding :
