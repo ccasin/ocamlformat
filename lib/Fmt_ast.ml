@@ -1379,8 +1379,9 @@ and fmt_body c ?ext ({ast= body; _} as xbody) =
             ; _ }
           , [(Nolabel, sbody)] )
     ; _ } ->
-      ( fmt " local_"
-      , fmt_expression c ~eol:(fmt "@;<1000 0>") (sub_exp ~ctx sbody) )
+      ( fmt "@ " $ fmt_if parens "(" $ fmt "local_"
+      , fmt_expression c ~eol:(fmt "@;<1000 0>") (sub_exp ~ctx sbody)
+        $ fmt_if parens ")")
   | _ -> (noop, fmt_expression c ~eol:(fmt "@;<1000 0>") xbody)
 
 and fmt_index_op c ctx ~fmt_atrs ~has_attr ~parens op =
@@ -1958,7 +1959,8 @@ and fmt_expression c ?(box = true) ?pro ?epi ?eol ?parens ?(indent_wrap = 0)
   | Pexp_apply
       ( {pexp_desc= Pexp_extension ({txt= "extension.local"; _}, PStr []); _}
       , [(Nolabel, sbody)] ) ->
-      fmt "local_@ " $ fmt_expression c (sub_exp ~ctx sbody)
+      Params.parens_if parens c.conf
+        (fmt "local_@ " $ fmt_expression c (sub_exp ~ctx sbody))
   | Pexp_apply (e0, [(Nolabel, e1)]) when Exp.is_prefix e0 ->
       hvbox 2
         (Params.Exp.wrap c.conf c.source ~loc:pexp_loc ~parens
