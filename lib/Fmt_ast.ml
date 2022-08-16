@@ -1234,8 +1234,11 @@ and fmt_fun_args c args =
         cbox 0
           ( str symbol
           $ hovbox 0
-           (Params.parens_if (islocal || parenze_pat xpat) c.conf
-          (fmt_if islocal "local_ " $ fmt_pattern ~parens:false c xpat)) )
+              (Params.parens_if
+                 (islocal || parenze_pat xpat)
+                 c.conf
+                 (fmt_if islocal "local_ " $ fmt_pattern ~parens:false c xpat) )
+          )
     | Val (islocal, (Optional _ as lbl), xpat, None) ->
         let has_attr = not (List.is_empty xpat.ast.ppat_attributes) in
         let outer_parens, inner_parens =
@@ -1846,7 +1849,8 @@ and fmt_expression c ?(box = true) ?pro ?epi ?eol ?parens ?(indent_wrap = 0)
   | Pexp_apply
       ( {pexp_desc= Pexp_extension ({txt= "extension.local"; _}, PStr []); _}
       , [(Nolabel, sbody)] ) ->
-      fmt "local_@ " $ fmt_expression c (sub_exp ~ctx sbody)
+      Params.parens_if parens c.conf
+        (fmt "local_@ " $ fmt_expression c (sub_exp ~ctx sbody))
   | Pexp_prefix (op, e) ->
       let has_cmts = Cmts.has_before c.cmts e.pexp_loc in
       hvbox 2
@@ -4119,7 +4123,9 @@ and fmt_structure_item c ~last:last_item ?ext ~semisemi
       let attributes, isfunctor = check_include_functor_attr attributes in
       update_config_maybe_disabled c pincl_loc attributes
       @@ fun c ->
-      let incl = if isfunctor then fmt "include@ functor" else str "include" in
+      let incl =
+        if isfunctor then fmt "include@ functor" else str "include"
+      in
       let keyword = incl $ fmt_extension_suffix c ext $ fmt "@ " in
       fmt_module_statement c ~attributes ~keyword (sub_mod ~ctx pincl_mod)
   | Pstr_module binding ->
