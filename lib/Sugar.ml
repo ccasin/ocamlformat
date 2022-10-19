@@ -14,6 +14,14 @@ open Asttypes
 open Ast
 open Extended_ast
 
+let check_local_attr attrs =
+  match
+    List.partition_tf attrs ~f:(fun attr ->
+        String.equal attr.attr_name.txt "ocaml.local")
+  with
+  | [], _ -> attrs, false
+  | _::_, rest -> rest, true
+
 let rec or_pat ?(allow_attribute = true) cmts ({ast= pat; _} as xpat) =
   let ctx = Pat pat in
   match pat with

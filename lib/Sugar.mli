@@ -13,6 +13,10 @@ open Migrate_ast
 open Asttypes
 open Extended_ast
 
+val check_local_attr : attributes -> attributes * bool
+(** [check_local_attr attrs] returns the input list with any local attributes
+    removed, and a bool if there was a local. *)
+
 val or_pat :
   ?allow_attribute:bool -> Cmts.t -> pattern Ast.xt -> pattern Ast.xt list
 (** [or_pat allow_attribute cmts pat] returns the list of patterns of a
