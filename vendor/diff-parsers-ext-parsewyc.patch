@@ -178,6 +178,22 @@
  
  let make_loc (startpos, endpos) = {
 @@@@
+   Attr.mk ~loc:Location.none local_ext_loc (PStr [])
+ 
+ let local_extension =
+   Exp.mk ~loc:Location.none (Pexp_extension(local_ext_loc, PStr []))
+ 
+-let include_functor_ext_loc = mknoloc "extension.include_functor"
+-
+-let include_functor_attr =
+-  Attr.mk ~loc:Location.none include_functor_ext_loc (PStr [])
+-
+ let mkexp_stack ~loc exp =
+   ghexp ~loc (Pexp_apply(local_extension, [Nolabel, exp]))
+ 
+ let mkpat_stack pat =
+   {pat with ppat_attributes = local_attr :: pat.ppat_attributes}
+@@@@
  
  let mkpat_opt_constraint ~loc p = function
    | None -> p
@@ -192,10 +208,54 @@
 +(*let unclosed opening_name opening_loc closing_name closing_loc =
    raise(Syntaxerr.Error(Syntaxerr.Unclosed(make_loc opening_loc, opening_name,
 -                                           make_loc closing_loc, closing_name)))
+-
 +                                           make_loc closing_loc, closing_name)))*)
+ (* Normal mutable arrays and immutable arrays are parsed identically, just with
+    different delimiters.  The parsing is done by the [array_exprs] rule, and the
+    [Generic_array] module provides (1) a type representing the possible results,
+    and (2) a function for going from that type to an AST fragment representing
+    an array. *)
+@@@@
+                        Lexing.position *
+                        expression list
+                      -> (expression, expression_desc) t
+     (** An array literal with a local open, [Module.[? x; y; z ?]] (only valid in
+         expressions) *)
+-    | Unclosed : (Lexing.position * Lexing.position) *
++    (*| Unclosed : (Lexing.position * Lexing.position) *
+                  (Lexing.position * Lexing.position)
+                -> (_, _) t
+     (** Parse error: an unclosed array literal, [\[? x; y; z] with no closing
+-        [?\]]. *)
++        [?\]]. *)*)
+ 
+   let to_ast (type ast ast_desc)
+-             (open_ : string) (close : string)
++             (_open_ : string) (_close : string)
+              (array : ast list -> ast_desc)
+         : (ast, ast_desc) t -> ast_desc = function
+     | Literal elts ->
+         array elts
+     | Opened_literal(od, startpos, endpos, elts) ->
+         (Pexp_open(od, mkexp ~loc:(startpos, endpos) (array elts)) : ast_desc)
+-    | Unclosed(startpos, endpos) ->
+-        unclosed open_ startpos close endpos
++    (*| Unclosed(startpos, endpos) ->
++        unclosed open_ startpos close endpos*)
+ 
+   let expression : _ -> _ -> _ -> (expression, expression_desc) t -> _ = to_ast
+   let pattern    : _ -> _ -> _ -> (pattern,    pattern_desc)    t -> _ = to_ast
+ end
+ 
+@@@@
+   (Extensions.Pattern.ast_of
+      ~loc:(make_loc loc)
+      Immutable_arrays
+      (Epat_immutable_array (Iapat_immutable_array elts))).ppat_desc
  
 -let expecting loc nonterm =
 -    raise Syntaxerr.(Error(Expecting(make_loc loc, nonterm)))
++
 +(*let expecting loc nonterm =
 +    raise Syntaxerr.(Error(Expecting(make_loc loc, nonterm)))*)
  
@@ -310,7 +370,7 @@
  %token FUN                    "fun"
  %token FUNCTION               "function"
  %token FUNCTOR                "functor"
- %token GREATER                ">"
+ %token GLOBAL                 "global_"
 @@@@
  %token <string> LETOP         "let*" (* just an example *)
  %token <string> ANDOP         "and*" (* just an example *)
@@ -332,11 +392,11 @@
  %token LET                    "let"
  %token <string> LIDENT        "lident" (* just an example *)
 +  [@recover.expr "<invalid-lident>"]
+ %token LOCAL                  "local_"
  %token LPAREN                 "("
  %token LBRACKETAT             "[@"
  %token LBRACKETATAT           "[@@"
  %token LBRACKETATATAT         "[@@@"
- %token MATCH                  "match"
 @@@@
  %token PERCENT                "%"
  %token PLUS                   "+"
@@ -391,6 +451,18 @@
  in favor of the first rule (in source file order).  A shift/reduce conflict
  is resolved by comparing the precedence and associativity of the token to
 @@@@
+ %right    COLONEQUAL                    /* expr (e := e := e) */
+ %nonassoc AS
+ %left     BAR                           /* pattern (p|p|p) */
+ %nonassoc below_COMMA
+ %left     COMMA                         /* expr/expr_comma_list (e,e,e) */
+-%nonassoc below_FUNCTOR                 /* include M */
+-%nonassoc FUNCTOR                       /* include functor M */
+ %right    MINUSGREATER                  /* function_type (t -> t -> t) */
+ %right    OR BARBAR                     /* expr (e || e || e) */
+ %right    AMPERSAND AMPERAMPER          /* expr (e && e && e) */
+ %nonassoc below_EQUAL
+ %left     INFIXOP0 EQUAL LESS GREATER   /* expr (e OP e OP e) */
  %right    INFIXOP1                      /* expr (e OP e OP e) */
  %nonassoc below_LBRACKETAT
  %nonassoc LBRACKETAT
@@ -460,6 +532,36 @@
  (* The various ways of annotating a core language expression that
     produces a first-class module that we wish to unpack. *)
  %inline expr_colon_package_type:
+@@@@
+ 
+ (* -------------------------------------------------------------------------- *)
+ 
+ (* Shared material between structures and signatures. *)
+ 
+-include_and_functor_attr:
+-  | INCLUDE %prec below_FUNCTOR
+-      { [] }
+-  | INCLUDE FUNCTOR
+-      { [include_functor_attr] }
+-;
+-
+ (* An [include] statement can appear in a structure or in a signature,
+    which is why this definition is parameterized. *)
+ %inline include_statement(thing):
+-  attrs0 = include_and_functor_attr
++  INCLUDE
+   ext = ext
+   attrs1 = attributes
+   thing = thing
+   attrs2 = post_item_attributes
+   {
+-    let attrs = attrs0 @ attrs1 @ attrs2 in
++    let attrs = attrs1 @ attrs2 in
+     let loc = make_loc $sloc in
+     let docs = symbol_docs $sloc in
+     Incl.mk thing ~attrs ~loc ~docs, ext
+   }
+ ;
 @@@@
  
  (* -------------------------------------------------------------------------- *)
@@ -579,6 +681,21 @@
        { let loc = ($startpos($2), $endpos($5)) in
          let od = Opn.mk ~override:$3 ~loc:(make_loc loc) $5 in
 @@@@
+       { $1 }
+   | poly_pattern
+       { $1 }
+ ;
+ %inline poly_pattern:
+-    mkpat(
+-      pat = pattern
++  mkpat(
++    pat = pattern
+       COLON
+       cty = mktyp(vars = typevar_list DOT ty = core_type
+               { Ptyp_poly(vars, ty) })
+         { Ppat_constraint(pat, cty) })
+       { $1 }
+@@@@
      { array, d, Brace,   i, r }
    | array=simple_expr d=dot LBRACKET i=index RBRACKET r=right
      { array, d, Bracket, i, r }
@@ -617,12 +734,12 @@
 +  (*| UNDERSCORE
 +     { not_expecting $loc($1) "wildcard \"_\"" }*)
  /* END AVOID */
+   | LOCAL seq_expr
+      { mkexp_stack ~loc:$sloc $2 }
  ;
  %inline expr_attrs:
-   | LET MODULE ext_attributes mkrhs(module_name) module_binding_body IN seq_expr
-       { Pexp_letmodule($4, $5, $7), $3 }
 @@@@
-       { (mk_newtypes ~loc:$sloc $5 $7).pexp_desc, $2 }
+         (mk_newtypes ~loc:$sloc $5 $7).pexp_desc, (ext, attrs) }
    | MATCH ext_attributes seq_expr WITH match_cases
        { Pexp_match($3, $5), $2 }
    | TRY ext_attributes seq_expr WITH match_cases
@@ -650,6 +767,8 @@
        { mkexp_constraint ~loc:$sloc $2 $3 }
    | indexop_expr(DOT, seq_expr, { None })
        { mk_indexop_expr builtin_indexing_operators ~loc:$sloc $1 }
+   (* Immutable array indexing is a regular operator, so it doesn't need its own
+      rule and is handled by the next case *)
    | indexop_expr(qualified_dotop, expr_semi_list, { None })
        { mk_indexop_expr user_indexing_operators ~loc:$sloc $1 }
 -  | indexop_error (DOT, seq_expr) { $1 }
@@ -688,10 +807,41 @@
 +  (*| OBJECT ext_attributes class_structure error
 +      { unclosed "object" $loc($1) "end" $loc($4) }*)
  ;
- %inline simple_expr_:
-   | mkrhs(val_longident)
-       { Pexp_ident ($1) }
-   | constant
+ 
+ comprehension_iterator:
+   | EQUAL expr direction_flag expr
+       { Extensions.Comprehensions.Range { start = $2 ; stop = $4 ; direction = $3 } }
+@@@@
+ ;
+ 
+ %inline array_simple(ARR_OPEN, ARR_CLOSE, contents_semi_list):
+   | ARR_OPEN contents_semi_list ARR_CLOSE
+       { Generic_array.Literal $2 }
+-  | ARR_OPEN contents_semi_list error
+-      { Generic_array.Unclosed($loc($1),$loc($3)) }
++  (*| ARR_OPEN contents_semi_list error
++      { Generic_array.Unclosed($loc($1),$loc($3)) }*)
+   | ARR_OPEN ARR_CLOSE
+       { Generic_array.Literal [] }
+ ;
+ 
+ %inline array_exprs(ARR_OPEN, ARR_CLOSE):
+@@@@
+   | od=open_dot_declaration DOT ARR_OPEN expr_semi_list ARR_CLOSE
+       { Generic_array.Opened_literal(od, $startpos($3), $endpos, $4) }
+   | od=open_dot_declaration DOT ARR_OPEN ARR_CLOSE
+       { (* TODO: review the location of Pexp_array *)
+         Generic_array.Opened_literal(od, $startpos($3), $endpos, []) }
+-  | mod_longident DOT
++  (*| mod_longident DOT
+     ARR_OPEN expr_semi_list error
+-      { Generic_array.Unclosed($loc($3), $loc($5)) }
++      { Generic_array.Unclosed($loc($3), $loc($5)) }*)
+ ;
+ 
+ %inline array_patterns(ARR_OPEN, ARR_CLOSE):
+   | array_simple(ARR_OPEN, ARR_CLOSE, pattern_semi_list)
+       { $1 }
 @@@@
        { Pexp_apply($1, [Nolabel,$2]) }
    | op(BANG {"!"}) simple_expr
@@ -744,30 +894,24 @@
 -      { unclosed "{" $loc($3) "}" $loc($5) }
 +  (*| mod_longident DOT LBRACE record_expr_content error
 +      { unclosed "{" $loc($3) "}" $loc($5) }*)
-   | LBRACKETBAR expr_semi_list BARRBRACKET
-       { Pexp_array($2) }
--  | LBRACKETBAR expr_semi_list error
--      { unclosed "[|" $loc($1) "|]" $loc($3) }
-+  (*| LBRACKETBAR expr_semi_list error
-+      { unclosed "[|" $loc($1) "|]" $loc($3) }*)
-   | LBRACKETBAR BARRBRACKET
-       { Pexp_array [] }
-   | od=open_dot_declaration DOT LBRACKETBAR expr_semi_list BARRBRACKET
-       { Pexp_open(od, mkexp ~loc:($startpos($3), $endpos) (Pexp_array($4))) }
-   | od=open_dot_declaration DOT LBRACKETBAR BARRBRACKET
-       { (* TODO: review the location of Pexp_array *)
-         Pexp_open(od, mkexp ~loc:($startpos($3), $endpos) (Pexp_array [])) }
--  | mod_longident DOT
-+  (*| mod_longident DOT
-     LBRACKETBAR expr_semi_list error
--      { unclosed "[|" $loc($3) "|]" $loc($5) }
-+      { unclosed "[|" $loc($3) "|]" $loc($5) }*)
+   | array_exprs(LBRACKETBAR, BARRBRACKET)
+       { Generic_array.expression
+           "[|" "|]"
+           (fun elts -> Pexp_array elts)
+           $1 }
+@@@@
+                Immutable_arrays
+                (Eexp_immutable_array (Iaexp_immutable_array elts))).pexp_desc)
+           $1 }
    | LBRACKET expr_semi_list RBRACKET
        { Pexp_list $2 }
 -  | LBRACKET expr_semi_list error
 -      { unclosed "[" $loc($1) "]" $loc($3) }
 +  (*| LBRACKET expr_semi_list error
 +      { unclosed "[" $loc($1) "]" $loc($3) }*)
+   | comprehension_expr { $1 }
+   | od=open_dot_declaration DOT comprehension_expr
+       { Pexp_open(od, mkexp ~loc:($loc($3)) $3) }
    | od=open_dot_declaration DOT LBRACKET expr_semi_list RBRACKET
        { let list_exp = mkexp ~loc:($startpos($3), $endpos) (Pexp_list $4) in
          Pexp_open(od, list_exp) }
@@ -916,14 +1060,12 @@
 -      { unclosed "[" $loc($1) "]" $loc($3) }
 +    (*| LBRACKET pattern_semi_list error
 +      { unclosed "[" $loc($1) "]" $loc($3) }*)
-     | LBRACKETBAR pattern_semi_list BARRBRACKET
-       { Ppat_array $2 }
-     | LBRACKETBAR BARRBRACKET
-       { Ppat_array [] }
--    | LBRACKETBAR pattern_semi_list error
--      { unclosed "[|" $loc($1) "|]" $loc($3) }
-+    (*| LBRACKETBAR pattern_semi_list error
-+      { unclosed "[|" $loc($1) "|]" $loc($3) }*)
+     | array_patterns(LBRACKETBAR, BARRBRACKET)
+         { Generic_array.pattern
+             "[|" "|]"
+             (fun elts -> Ppat_array elts)
+             $1 }
+@@@@
    ) { $1 }
  
  pattern_comma_list(self):

@@ -89,6 +89,14 @@ let _ =
       0
   | _ -> 1
 
+let _ =
+  match something with
+  | [: very_very_long_field_name_running_out_of_space
+     ; another_very_very_long_field_name_running_out_of_space
+     ; _ :] ->
+      0
+  | _ -> 1
+
 [@@@ocamlformat "type-decl=compact"]
 
 type t = {aaaaaaaaa: aaaa; bbbbbbbbb: bbbb}
@@ -163,6 +171,16 @@ let length =
    ; 27 |]
   [@foo]
 
+(* this is an immutable array *)
+let length =
+  [: 0
+   ; 269999999999999999999999999999999999999999999999999
+   ; 26
+   ; (* foo *) 27 (* foo *)
+   ; 27
+   ; 27 :]
+  [@foo]
+
 (* this is a list *)
 let length =
   [ 0
@@ -173,6 +191,36 @@ let length =
   ; 17
   ; 2777777777777777777777777777777777
   ; 27 ]
+  [@foo]
+
+(* Comprehensions are invariant under separator placement and wrapping vs.
+   breaking, but respect delimiter docking behavior *)
+
+(* this is a list comprehension *)
+let pythagorean =
+  [ (a, b, c)
+    for a = 1 to 10
+    for b = a to 10
+    for c = b to 10
+    when (a * a) + (b * b) = c * c ]
+  [@foo]
+
+(* this is an array comprehension *)
+let pythagorean =
+  [| (a, b, c)
+     for a = 1 to 10
+     for b = a to 10
+     for c = b to 10
+     when (a * a) + (b * b) = c * c |]
+  [@foo]
+
+(* this is an immutable array comprehension *)
+let pythagorean =
+  [: (a, b, c)
+     for a = 1 to 10
+     for b = a to 10
+     for c = b to 10
+     when (a * a) + (b * b) = c * c :]
   [@foo]
 ;;
 
@@ -279,6 +327,104 @@ let length =
    ; 27
    ; 27
    ; 28 |]
+  [@foo]
+
+(* this is an immutable array *)
+let length =
+  [: 0
+   ; 1
+   ; 2
+   ; 3
+   ; 4
+   ; 5
+   ; 6
+   ; 7
+   ; 8
+   ; 8
+   ; 9
+   ; 9
+   ; 10
+   ; 10
+   ; 11
+   ; 11
+   ; 12
+   ; 12
+   ; 12
+   ; 12
+   ; 13
+   ; 25
+   ; 25
+   ; 25
+   ; 25
+   ; 25
+   ; 25
+   ; 25
+   ; 25
+   ; 25
+   ; 26
+   ; 26
+   ; 26
+   ; 26
+   ; 26
+   ; 26
+   ; 26
+   ; 26
+   ; 26
+   ; 26
+   ; 26
+   ; 26
+   ; 26
+   ; 26
+   ; 26
+   ; 269999999999999999999999999999999999999999999999999
+   ; 26
+   ; 26
+   ; 26
+   ; 26
+   ; 26
+   ; 26
+   ; 26
+   ; 26
+   ; 26
+   ; 26
+   ; 26
+   ; 26
+   ; 26
+   ; 26
+   ; 26
+   ; 26
+   ; 27
+   ; 27
+   ; 27
+   ; 27
+   ; 27
+   ; 27
+   ; 27
+   ; 27
+   ; 27
+   ; 27
+   ; 27
+   ; 27
+   ; 27
+   ; 27
+   ; 27
+   ; 27
+   ; 27
+   ; 27
+   ; 27
+   ; 27
+   ; 27
+   ; (* foo *) 27 (* foo *)
+   ; 27
+   ; 27
+   ; 27
+   ; 27
+   ; 27
+   ; 27
+   ; 27
+   ; 27
+   ; 27
+   ; 28 :]
   [@foo]
 
 (* this is a list *)
@@ -575,6 +721,20 @@ let f () =
   in
   foooooooooooo
 
+let f () =
+  let [: aaaaaaaa
+       ; bbbbbbbbbb
+       ; ccccccccc
+       ; dddddddddd
+       ; eeeeeeeee
+       ; ffffffffff
+       ; gggggggggg
+       ; hhhhhhhhhh :]
+    =
+    some_value
+  in
+  foooooooooooo
+
 let g () =
   match some_value with
   | { aaaaaaaa
@@ -603,6 +763,15 @@ let g () =
      ; ffffffffff
      ; gggggggggg
      ; hhhhhhhhhh |] ->
+      fooooooooo
+  | [: aaaaaaaa
+     ; bbbbbbbbbb
+     ; ccccccccc
+     ; dddddddddd
+     ; eeeeeeeee
+     ; ffffffffff
+     ; gggggggggg
+     ; hhhhhhhhhh :] ->
       fooooooooo
 
 let () = match x with _, (* line 1 line 2 *) Some _ -> x

@@ -308,6 +308,9 @@ module Exp = struct
     | _ -> List.exists pexp_attributes ~f:(Fn.non Attr.is_doc)
 
   let rec is_trivial exp =
+    match Extensions.Expression.of_ast exp with
+    | Some eexp -> is_trivial_extension eexp
+    | None      ->
     match exp.pexp_desc with
     | Pexp_constant {pconst_desc= Pconst_string (_, _, None); _} -> true
     | Pexp_constant _ | Pexp_field _ | Pexp_ident _ | Pexp_send _ -> true
@@ -320,6 +323,14 @@ module Exp = struct
     | Pexp_array [] | Pexp_list [] -> true
     | Pexp_array [x] | Pexp_list [x] -> is_trivial x
     | _ -> false
+
+  and is_trivial_extension : Extensions.Expression.t -> _ = function
+    | Eexp_immutable_array (Iaexp_immutable_array []) -> true
+    | Eexp_immutable_array (Iaexp_immutable_array [x]) -> is_trivial x
+    | Eexp_immutable_array (Iaexp_immutable_array _)
+    | Eexp_comprehension
+        (Cexp_list_comprehension _ | Cexp_array_comprehension _)
+      -> false
 
   let rec exposed_left e =
     match e.pexp_desc with
@@ -355,7 +366,14 @@ module Pat = struct
         true
     | _ -> false
 
-  let has_trailing_attributes {ppat_desc; ppat_attributes; _} =
+  let has_trailing_attributes_extension _ppat_attributes : Extensions.Pattern.t -> _ =
+    function
+    | Epat_immutable_array (Iapat_immutable_array _) -> false
+
+  let has_trailing_attributes ({ppat_desc; ppat_attributes; _} as pat) =
+    match Extensions.Pattern.of_ast pat with
+    | Some epat -> has_trailing_attributes_extension ppat_attributes epat
+    | None      ->
     match ppat_desc with
     | Ppat_construct (_, None)
      |Ppat_constant _ | Ppat_any | Ppat_var _
@@ -1304,6 +1322,34 @@ end = struct
     let dump {ctx; ast= cl} = dump ctx (Cl cl) in
     assert_no_raise ~f:check_cl ~dump xcl
 
+  module Comprehension_child = struct
+    type t = Expression of expression | Pattern of pattern
+  end
+
+  let check_comprehension
+        (Extensions.Comprehensions.{body; clauses})
+        (tgt : Comprehension_child.t)  =
+    let expression_is_child = match tgt with
+      | Expression exp -> fun exp' -> exp' == exp
+      | _              -> fun _    -> false
+    in
+    let pattern_is_child = match tgt with
+      | Pattern pat -> fun pat' -> pat' == pat
+      | _           -> fun _    -> false
+    in
+    expression_is_child body ||
+    List.exists clauses ~f:(function
+      | For bindings ->
+          List.exists bindings ~f:(fun { iterator; pattern; attributes = _ } ->
+            pattern_is_child pattern ||
+            match iterator with
+            | Range { start; stop; direction = _ } ->
+                expression_is_child start || expression_is_child stop
+            | In seq ->
+                expression_is_child seq)
+      | When cond ->
+          expression_is_child cond)
+
   let check_pat {ctx; ast= pat} =
     let check_pcstr_fields pcstr_fields =
       List.exists pcstr_fields ~f:(fun {pcf_desc; _} ->
@@ -1339,6 +1385,14 @@ end = struct
     | Pat ctx -> (
         let f pI = pI == pat in
         let snd_f (_, pI) = pI == pat in
+        (* Inlined because we're closed over things *)
+        let check_extension : Extensions.Pattern.t -> _ = function
+          | Epat_immutable_array (Iapat_immutable_array p1N) ->
+              assert (List.exists p1N ~f)
+        in
+        match Extensions.Pattern.of_ast ctx with
+        | Some ectx -> check_extension ectx
+        | None      ->
         match ctx.ppat_desc with
         | Ppat_array p1N | Ppat_list p1N | Ppat_tuple p1N ->
             assert (List.exists p1N ~f)
@@ -1363,6 +1417,18 @@ end = struct
          |Ppat_variant (_, None) ->
             assert false )
     | Exp ctx -> (
+      (* Inlined because it's simpler *)
+      let check_extension : Extensions.Expression.t -> _ = function
+        | Eexp_comprehension
+            (Cexp_list_comprehension comp | Cexp_array_comprehension (_, comp))
+          ->
+            assert (check_comprehension comp (Pattern pat))
+        | Eexp_immutable_array (Iaexp_immutable_array _) ->
+            assert false
+      in
+      match Extensions.Expression.of_ast ctx with
+      | Some ectx -> check_extension ectx
+      | None      ->
       match ctx.pexp_desc with
       | Pexp_apply _ | Pexp_array _ | Pexp_list _ | Pexp_assert _
        |Pexp_coerce _ | Pexp_constant _ | Pexp_constraint _
@@ -1460,6 +1526,19 @@ end = struct
     | Exp ctx -> (
         let f eI = eI == exp in
         let snd_f (_, eI) = eI == exp in
+
+        (* Inlined because we're closed over things *)
+        let check_extension : Extensions.Expression.t -> _ = function
+          | Eexp_comprehension
+              (Cexp_list_comprehension comp | Cexp_array_comprehension (_, comp))
+            ->
+              assert (check_comprehension comp (Expression exp))
+          | Eexp_immutable_array (Iaexp_immutable_array e1N) ->
+              assert (List.exists e1N ~f)
+        in
+        match Extensions.Expression.of_ast ctx with
+        | Some ectx -> check_extension ectx
+        | None      ->
         match ctx.pexp_desc with
         | Pexp_construct
             ({txt= Lident "::"; _}, Some {pexp_desc= Pexp_tuple [e1; e2]; _})
@@ -1586,6 +1665,9 @@ end = struct
 
   let rec is_simple (c : Conf.t) width ({ast= exp; _} as xexp) =
     let ctx = Exp exp in
+    match Extensions.Expression.of_ast exp with
+    | Some eexp -> is_simple_extension c width xexp eexp
+    | None      ->
     match exp.pexp_desc with
     | Pexp_constant _ -> Exp.is_trivial exp
     | Pexp_field _ | Pexp_ident _ | Pexp_send _
@@ -1615,6 +1697,20 @@ end = struct
         is_simple c width (sub_exp ~ctx e0)
     | Pexp_extension (_, (PStr [] | PTyp _)) -> true
     | _ -> false
+
+  and is_simple_extension c width xexp : Extensions.Expression.t -> bool = function
+    | Eexp_immutable_array (Iaexp_immutable_array e1N) ->
+        List.for_all e1N ~f:Exp.is_trivial && fit_margin c (width xexp)
+    | Eexp_comprehension (Cexp_list_comprehension _ | Cexp_array_comprehension _) ->
+        false
+
+  let prec_ctx_extension : Extensions.Expression.t -> _ =
+    let open Prec in
+    let open Assoc in
+    function
+    | Eexp_comprehension (Cexp_list_comprehension _ | Cexp_array_comprehension _)
+    | Eexp_immutable_array (Iaexp_immutable_array _)
+      -> Some (Semi, Non)
 
   (** [prec_ctx {ctx; ast}] is the precedence of the context of [ast] within
       [ctx], where [ast] is an immediate sub-term (modulo syntactic sugar) of
@@ -1688,7 +1784,10 @@ end = struct
       | _ -> None )
     | {ast= Cty _; _} -> None
     | {ast= Typ _; _} -> None
-    | {ctx= Exp {pexp_desc; _}; ast= Exp exp} -> (
+    | {ctx= Exp ({pexp_desc; _} as ctx); ast= Exp exp} -> (
+      match Extensions.Expression.of_ast ctx with
+      | Some ectx -> prec_ctx_extension ectx
+      | None      ->
       match pexp_desc with
       | Pexp_tuple (e0 :: _) ->
           Some (Comma, if exp == e0 then Left else Right)
@@ -1960,6 +2059,12 @@ end = struct
     assert_check_pat xpat ;
     Pat.has_trailing_attributes pat
     ||
+    match Extensions.Pattern.of_ast pat with
+    | Some epat -> begin (* Inlined because it's simpler *)
+        match epat with
+        | Epat_immutable_array (Iapat_immutable_array _)  -> false
+    end
+    | None      ->
     match (ctx, pat.ppat_desc) with
     | ( Pat
           { ppat_desc=
@@ -2097,6 +2202,15 @@ end = struct
           (not (parenze_exp (sub_exp ~ctx:(Exp exp) subexp)))
           && exposed_right_exp cls subexp
         in
+        match Extensions.Expression.of_ast exp with
+        | Some eexp -> begin (* Inlined because we're closed over [memo] *)
+            match eexp with
+            | Eexp_comprehension
+                (Cexp_list_comprehension _ | Cexp_array_comprehension _)
+            | Eexp_immutable_array (Iaexp_immutable_array _)
+              -> false
+        end
+        | None      ->
         match exp.pexp_desc with
         | Pexp_assert e
          |Pexp_construct
@@ -2173,6 +2287,15 @@ end = struct
           mark_parenzed_inner_nested_match subexp ;
         false
       in
+      match Extensions.Expression.of_ast exp with
+      | Some eexp -> begin (* Inlined because we're nested *)
+          match eexp with
+            | Eexp_comprehension
+                (Cexp_list_comprehension _ | Cexp_array_comprehension _)
+            | Eexp_immutable_array (Iaexp_immutable_array _)
+              -> false
+        end
+      | None      ->
       match exp.pexp_desc with
       | Pexp_assert e
        |Pexp_construct
@@ -2304,6 +2427,22 @@ end = struct
     || Hashtbl.find marked_parenzed_inner_nested_match exp
        |> Option.value ~default:false
     ||
+    (* We don't just do the full-scale match on [Extensions.Expression.of_ast
+       exp] here because the following match is on [ctx, exp] and is very
+       complicated.  These booleans let us integrate our extended AST nodes into
+       the match in the most natural possible way relative to the structure of
+       the existing match.  We make them lazy because we only want to run
+       [of_ast] if we know that [exp] isn't actually a subterm of an extension
+       expression. *)
+    let opt_eexp = lazy (Extensions.Expression.of_ast exp) in
+    let is_extension_comprehension = Lazy.map opt_eexp ~f:(function
+      | Some (Eexp_comprehension _) -> true
+      | _                           -> false)
+    in
+    let is_extension_immutable_array = Lazy.map opt_eexp ~f:(function
+      | Some (Eexp_immutable_array _) -> true
+      | _                             -> false)
+    in
     match (ctx, exp) with
     | Str {pstr_desc= Pstr_eval _; _}, _ -> false
     | ( Exp
@@ -2384,7 +2523,28 @@ end = struct
     | Exp {pexp_desc= Pexp_field (e, _); _}, {pexp_desc= Pexp_construct _; _}
       when e == exp ->
         true
-    | Exp {pexp_desc; _}, _ -> (
+    | Exp ({pexp_desc; _} as ctx_exp), _ -> (
+      (* This is the old fallthrough case, but we need it for the extensions
+         match and the real match, so we factor it out; we have to do an
+         external match on [ctx_exp] because the below fallthrough case matches
+         on subterms, which can cause exceptions if we break into the
+         representation of a language extension. *)
+      let fallthrough_case () =
+        match exp.pexp_desc with
+        | Pexp_list _ | Pexp_array _ -> false
+        | _ when Lazy.force is_extension_comprehension ||
+                 Lazy.force is_extension_immutable_array -> false
+        | _ -> (Exp.has_trailing_attributes exp &&
+                trailing_attrs_require_parens ctx exp) ||
+               parenze ()
+      in
+      match Extensions.Expression.of_ast ctx_exp with
+      | Some ctx_eexp -> begin match ctx_eexp with
+        | Eexp_comprehension _
+        | Eexp_immutable_array _ ->
+            fallthrough_case ()
+        end
+      | None ->
       match pexp_desc with
       | Pexp_extension
           ( _
@@ -2454,19 +2614,30 @@ end = struct
       | Pexp_sequence (lhs, rhs) -> exp_in_sequence lhs rhs exp
       | Pexp_apply (_, args)
         when List.exists args ~f:(fun (_, e0) ->
+                 match Extensions.Expression.of_ast e0 with
+                 | Some ee0 -> begin match (ee0, e0.pexp_attributes) with
+                     | ( Eexp_comprehension
+                           (Cexp_list_comprehension _ | Cexp_array_comprehension _)
+                       | Eexp_immutable_array (Iaexp_immutable_array _) )
+                     , _ :: _
+                     when e0 == exp ->
+                       (* Has to be [e0] and not [ee0], as [ee0] isn't a true
+                          OCaml expression and was just synthesized afresh *)
+                       true
+                     | _ -> false
+                 end
+                 | None ->
                  match (e0.pexp_desc, e0.pexp_attributes) with
                  | Pexp_list _, _ :: _ when e0 == exp -> true
                  | Pexp_array _, _ :: _ when e0 == exp -> true
                  | _ -> false ) ->
           true
-      | _ -> (
-        match exp.pexp_desc with
-        | Pexp_list _ | Pexp_array _ -> false
-        | _ -> (Exp.has_trailing_attributes exp &&
-                trailing_attrs_require_parens ctx exp) ||
-               parenze () ) )
+      | _ -> fallthrough_case () )
     | _, {pexp_desc= Pexp_list _; _} -> false
     | _, {pexp_desc= Pexp_array _; _} -> false
+    | _, _ when Lazy.force is_extension_comprehension ||
+                Lazy.force is_extension_immutable_array ->
+        false
     | ctx, exp when Exp.has_trailing_attributes exp &&
                     trailing_attrs_require_parens ctx exp -> true
     | _ -> false
