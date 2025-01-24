@@ -202,8 +202,9 @@ module Exp = struct
      |Pexp_construct (_, None)
      |Pexp_variant (_, None)
      |Pexp_override _ | Pexp_open _ | Pexp_extension _ | Pexp_hole
-     |Pexp_record _ | Pexp_array _ | Pexp_list _
-     |Pexp_list_comprehension _ | Pexp_array_comprehension _ ->
+     |Pexp_record _ | Pexp_record_unboxed_product _ | Pexp_array _
+     |Pexp_list _ | Pexp_list_comprehension _ | Pexp_array_comprehension _
+     |Pexp_unboxed_tuple _ ->
         true
     | Pexp_prefix (_, e) | Pexp_field (e, _) | Pexp_send (e, _) ->
         is_simple_in_parser e
@@ -211,7 +212,18 @@ module Exp = struct
         String.length txt > 0
         && Char.(String.get txt 0 = '#')
         && is_simple_in_parser e1 && is_simple_in_parser e2
-    | _ -> false
+    | Pexp_indexop_access {pia_rhs= Some _; _}
+     |Pexp_construct (_, Some _)
+     |Pexp_variant (_, Some _)
+     |Pexp_unreachable | Pexp_let _ | Pexp_function _ | Pexp_fun _
+     |Pexp_apply _ | Pexp_match _ | Pexp_try _ | Pexp_tuple _
+     |Pexp_unboxed_field _ | Pexp_setfield _ | Pexp_ifthenelse _
+     |Pexp_sequence _ | Pexp_while _ | Pexp_for _ | Pexp_constraint _
+     |Pexp_coerce _ | Pexp_setinstvar _ | Pexp_letmodule _
+     |Pexp_letexception _ | Pexp_assert _ | Pexp_lazy _ | Pexp_poly _
+     |Pexp_newtype _ | Pexp_pack _ | Pexp_letopen _ | Pexp_letop _
+     |Pexp_stack _ | Pexp_beginend _ | Pexp_parens _ | Pexp_cons _ ->
+        false
 end
 
 module Pat = struct
@@ -240,22 +252,30 @@ module Pat = struct
      non-simple pattern. *)
   let rec is_simple_in_parser {ppat_desc; _} =
     match ppat_desc with
-    | Ppat_var _ | Ppat_record _ | Ppat_list _ | Ppat_array _ | Ppat_any
-     |Ppat_constant _
+    | Ppat_var _ | Ppat_record _ | Ppat_record_unboxed_product _
+     |Ppat_list _ | Ppat_array _ | Ppat_any | Ppat_constant _
      |Ppat_construct (_, None)
      |Ppat_variant (_, None)
-     |Ppat_type _ | Ppat_extension _ ->
+     |Ppat_type _ | Ppat_extension _ | Ppat_unboxed_tuple _ ->
         true
     | Ppat_open (_, p) -> is_simple_in_parser p
-    | _ -> false
+    | Ppat_construct (_, Some _)
+     |Ppat_variant (_, Some _)
+     |Ppat_alias _ | Ppat_interval _ | Ppat_tuple _ | Ppat_or _
+     |Ppat_constraint (_, _, _)
+     |Ppat_lazy _
+     |Ppat_unpack (_, _)
+     |Ppat_exception _ | Ppat_cons _ ->
+        false
 
   let has_trailing_attributes {ppat_desc; ppat_attributes; _} =
     match ppat_desc with
     | Ppat_construct (_, None)
      |Ppat_constant _ | Ppat_any | Ppat_var _
      |Ppat_variant (_, None)
-     |Ppat_record _ | Ppat_array _ | Ppat_list _ | Ppat_type _
-     |Ppat_unpack _ | Ppat_extension _ | Ppat_open _ | Ppat_interval _ ->
+     |Ppat_record _ | Ppat_record_unboxed_product _ | Ppat_array _
+     |Ppat_list _ | Ppat_type _ | Ppat_unpack _ | Ppat_extension _
+     |Ppat_open _ | Ppat_interval _ ->
         false
     | _ -> List.exists ppat_attributes ~f:(Fn.non Attr.is_doc)
 end
@@ -1018,7 +1038,7 @@ end = struct
              | Ptype_variant cd1N ->
                  List.exists cd1N ~f:(fun {pcd_args; pcd_res; _} ->
                      check_cstr pcd_args || Option.exists pcd_res ~f )
-             | Ptype_record ld1N ->
+             | Ptype_record ld1N | Ptype_record_unboxed_product ld1N ->
                  List.exists ld1N ~f:(fun {pld_type; _} -> typ == pld_type)
              | _ -> false )
           || Option.exists ptype_manifest ~f )
@@ -1039,7 +1059,7 @@ end = struct
       | Ppat_extension (_, PTyp t) -> assert (typ == t)
       | Ppat_unpack (_, Some (_, l, _)) ->
           assert (List.exists l ~f:(fun (_, t) -> typ == t))
-      | Ppat_record (l, _) ->
+      | Ppat_record (l, _) | Ppat_record_unboxed_product (l, _) ->
           assert (List.exists l ~f:(fun (_, t, _) -> Option.exists t ~f))
       | _ -> assert false )
     | Exp ctx -> (
@@ -1053,7 +1073,7 @@ end = struct
       | Pexp_coerce (_, Some t1, t2) -> assert (typ == t1 || typ == t2)
       | Pexp_letexception (ext, _) -> assert (check_ext ext)
       | Pexp_object _ -> assert false
-      | Pexp_record (en1, _) ->
+      | Pexp_record (en1, _) | Pexp_record_unboxed_product (en1, _) ->
           assert (
             List.exists en1 ~f:(fun (_, c, _) ->
                 Option.exists c ~f:(function
@@ -1651,7 +1671,7 @@ end = struct
     | Pexp_tuple e1N | Pexp_unboxed_tuple e1N ->
         List.for_all e1N ~f:(fun (_, e) -> Exp.is_trivial e)
         && fit_margin c (width xexp)
-    | Pexp_record (e1N, e0) ->
+    | Pexp_record (e1N, e0) | Pexp_record_unboxed_product (e1N, e0) ->
         Option.for_all e0 ~f:Exp.is_trivial
         && List.for_all e1N ~f:(fun (_, c, eo) ->
                Option.is_none c && Option.for_all eo ~f:Exp.is_trivial )
@@ -2069,7 +2089,9 @@ end = struct
     | Pat {ppat_desc= Ppat_cons _; _}, inner -> (
       match inner with
       | Ppat_cons _ -> true
-      | Ppat_construct _ | Ppat_record _ | Ppat_variant _ -> false
+      | Ppat_construct _ | Ppat_record _ | Ppat_record_unboxed_product _
+       |Ppat_unboxed_tuple _ | Ppat_variant _ ->
+          false
       | _ -> true )
     | Fp {pparam_desc= Pparam_val (_, _, _, _); _}, Ppat_cons _ -> true
     | Pat {ppat_desc= Ppat_construct _; _}, Ppat_cons _ -> true
@@ -2635,12 +2657,14 @@ end = struct
             , _ )
           when exp2 == exp ->
             false
-        | Pexp_record (flds, _)
+        | (Pexp_record (flds, _) | Pexp_record_unboxed_product (flds, _))
           when List.exists flds ~f:(fun (_, _, e0) ->
                    Option.exists e0 ~f:(fun x -> x == exp) ) ->
             exposed_right_exp Non_apply exp
             (* Non_apply is perhaps pessimistic *)
         | Pexp_record (_, Some ({pexp_desc= Pexp_prefix _; _} as e0))
+         |Pexp_record_unboxed_product
+            (_, Some ({pexp_desc= Pexp_prefix _; _} as e0))
           when e0 == exp ->
             (* don't put parens around [!e] in [{ !e with a; b }] *)
             false
@@ -2651,9 +2675,19 @@ end = struct
                       ( Pexp_ident _ | Pexp_constant _ | Pexp_record _
                       | Pexp_constraint _ | Pexp_field _ )
                   ; _ } as e0 ) )
+         |Pexp_record_unboxed_product
+            ( _
+            , Some
+                ( { pexp_desc=
+                      ( Pexp_ident _ | Pexp_constant _ | Pexp_record _
+                      | Pexp_constraint _ | Pexp_field _ )
+                  ; _ } as e0 ) )
           when e0 == exp ->
             false
-        | Pexp_record (_, Some e0) when e0 == exp -> true
+        | Pexp_record (_, Some e0)
+         |Pexp_record_unboxed_product (_, Some e0)
+          when e0 == exp ->
+            true
         | Pexp_override fields
           when List.exists fields ~f:(fun (_, e0) -> e0 == exp) ->
             exposed_right_exp Sequence exp
