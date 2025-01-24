@@ -360,7 +360,8 @@ module Tyd = struct
   let is_simple x =
     match x.ptype_kind with
     | Ptype_abstract | Ptype_open -> true
-    | Ptype_variant _ | Ptype_record _ -> false
+    | Ptype_variant _ | Ptype_record _ | Ptype_record_unboxed_product _ ->
+        false
 end
 
 module Structure_item = struct
@@ -1367,7 +1368,7 @@ end = struct
             assert (List.exists p1N ~f)
         | Ppat_tuple (p1N, _) | Ppat_unboxed_tuple (p1N, _) ->
             assert (List.exists p1N ~f:(fun (_, p) -> f p))
-        | Ppat_record (p1N, _) ->
+        | Ppat_record (p1N, _) | Ppat_record_unboxed_product (p1N, _) ->
             assert (List.exists p1N ~f:(fun (_, _, x) -> Option.exists x ~f))
         | Ppat_or l -> assert (List.exists ~f:(fun p -> p == pat) l)
         | Ppat_alias (p1, _)
@@ -1390,15 +1391,17 @@ end = struct
           assert (check_comprehension comp (Pattern pat))
       | Pexp_apply _ | Pexp_array _ | Pexp_list _ | Pexp_assert _
        |Pexp_coerce _ | Pexp_constant _ | Pexp_constraint _
-       |Pexp_construct _ | Pexp_field _ | Pexp_ident _ | Pexp_ifthenelse _
-       |Pexp_lazy _ | Pexp_letexception _ | Pexp_letmodule _ | Pexp_new _
+       |Pexp_construct _ | Pexp_field _ | Pexp_unboxed_field _
+       |Pexp_ident _ | Pexp_ifthenelse _ | Pexp_lazy _
+       |Pexp_letexception _ | Pexp_letmodule _ | Pexp_new _
        |Pexp_newtype _ | Pexp_open _ | Pexp_override _ | Pexp_pack _
-       |Pexp_poly _ | Pexp_record _ | Pexp_send _ | Pexp_sequence _
-       |Pexp_setfield _ | Pexp_setinstvar _ | Pexp_tuple _
-       |Pexp_unboxed_tuple _ | Pexp_unreachable | Pexp_variant _
-       |Pexp_while _ | Pexp_hole | Pexp_beginend _ | Pexp_parens _
-       |Pexp_cons _ | Pexp_letopen _ | Pexp_indexop_access _
-       |Pexp_prefix _ | Pexp_infix _ | Pexp_stack _ ->
+       |Pexp_poly _ | Pexp_record _ | Pexp_record_unboxed_product _
+       |Pexp_send _ | Pexp_sequence _ | Pexp_setfield _ | Pexp_setinstvar _
+       |Pexp_tuple _ | Pexp_unboxed_tuple _ | Pexp_unreachable
+       |Pexp_variant _ | Pexp_while _ | Pexp_hole | Pexp_beginend _
+       |Pexp_parens _ | Pexp_cons _ | Pexp_letopen _
+       |Pexp_indexop_access _ | Pexp_prefix _ | Pexp_infix _ | Pexp_stack _
+        ->
           assert false
       | Pexp_extension (_, ext) -> assert (check_extensions ext)
       | Pexp_object {pcstr_self; _} ->
@@ -1521,7 +1524,7 @@ end = struct
             assert (List.exists e1N ~f)
         | Pexp_construct (_, e) | Pexp_variant (_, e) ->
             assert (Option.exists e ~f)
-        | Pexp_record (e1N, e0) ->
+        | Pexp_record (e1N, e0) | Pexp_record_unboxed_product (e1N, e0) ->
             assert (
               Option.exists e0 ~f
               || List.exists e1N ~f:(fun (_, _, e) -> Option.exists e ~f) )
@@ -1532,6 +1535,7 @@ end = struct
          |Pexp_stack e
          |Pexp_coerce (e, _, _)
          |Pexp_field (e, _)
+         |Pexp_unboxed_field (e, _)
          |Pexp_lazy e
          |Pexp_letexception (_, e)
          |Pexp_letmodule (_, _, _, e)
@@ -2249,9 +2253,10 @@ end = struct
         | Pexp_array _ | Pexp_list _ | Pexp_coerce _ | Pexp_constant _
          |Pexp_constraint _
          |Pexp_construct (_, None)
-         |Pexp_extension _ | Pexp_field _ | Pexp_for _ | Pexp_ident _
-         |Pexp_new _ | Pexp_object _ | Pexp_override _ | Pexp_pack _
-         |Pexp_poly _ | Pexp_record _ | Pexp_send _ | Pexp_unreachable
+         |Pexp_extension _ | Pexp_field _ | Pexp_unboxed_field _
+         |Pexp_for _ | Pexp_ident _ | Pexp_new _ | Pexp_object _
+         |Pexp_override _ | Pexp_pack _ | Pexp_poly _ | Pexp_record _
+         |Pexp_record_unboxed_product _ | Pexp_send _ | Pexp_unreachable
          |Pexp_variant (_, None)
          |Pexp_hole | Pexp_while _ | Pexp_beginend _ | Pexp_parens _
          |Pexp_indexop_access _ | Pexp_list_comprehension _
@@ -2331,9 +2336,10 @@ end = struct
       | Pexp_array _ | Pexp_list _ | Pexp_coerce _ | Pexp_constant _
        |Pexp_constraint _
        |Pexp_construct (_, None)
-       |Pexp_extension _ | Pexp_field _ | Pexp_for _ | Pexp_ident _
-       |Pexp_new _ | Pexp_object _ | Pexp_override _ | Pexp_pack _
-       |Pexp_poly _ | Pexp_record _ | Pexp_send _ | Pexp_unreachable
+       |Pexp_extension _ | Pexp_field _ | Pexp_unboxed_field _ | Pexp_for _
+       |Pexp_ident _ | Pexp_new _ | Pexp_object _ | Pexp_override _
+       |Pexp_pack _ | Pexp_poly _ | Pexp_record _
+       |Pexp_record_unboxed_product _ | Pexp_send _ | Pexp_unreachable
        |Pexp_variant (_, None)
        |Pexp_hole | Pexp_while _ | Pexp_beginend _ | Pexp_parens _
        |Pexp_list_comprehension _ | Pexp_array_comprehension _ ->
