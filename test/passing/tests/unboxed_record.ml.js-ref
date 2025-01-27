@@ -265,3 +265,6 @@ let _ = #{ a = 1; b = 2; c = 3; short };;
 
 (* make sure to not drop parens for local open. *)
 let _ = A.(#{ a = 1; b = 2 })
+
+(* make sure not to drop parens around thing being projected from. *)
+let _ = (f x).#foo

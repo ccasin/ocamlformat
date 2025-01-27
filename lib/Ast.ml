@@ -149,7 +149,9 @@ module Exp = struct
   let rec is_trivial exp =
     match exp.pexp_desc with
     | Pexp_constant {pconst_desc= Pconst_string (_, _, None); _} -> true
-    | Pexp_constant _ | Pexp_field _ | Pexp_ident _ | Pexp_send _ -> true
+    | Pexp_constant _ | Pexp_field _ | Pexp_unboxed_field _ | Pexp_ident _
+     |Pexp_send _ ->
+        true
     | Pexp_construct (_, exp) -> Option.for_all exp ~f:is_trivial
     | Pexp_prefix (_, e) -> is_trivial e
     | Pexp_apply
@@ -164,7 +166,7 @@ module Exp = struct
     match e.pexp_desc with
     | Pexp_prefix _ -> true
     | Pexp_apply (op, _) -> exposed_left op
-    | Pexp_field (e, _) -> exposed_left e
+    | Pexp_field (e, _) | Pexp_unboxed_field (e, _) -> exposed_left e
     | _ -> false
 
   (** [mem_cls cls exp] holds if [exp] is in the named class of expressions
@@ -206,7 +208,10 @@ module Exp = struct
      |Pexp_list _ | Pexp_list_comprehension _ | Pexp_array_comprehension _
      |Pexp_unboxed_tuple _ ->
         true
-    | Pexp_prefix (_, e) | Pexp_field (e, _) | Pexp_send (e, _) ->
+    | Pexp_prefix (_, e)
+     |Pexp_field (e, _)
+     |Pexp_unboxed_field (e, _)
+     |Pexp_send (e, _) ->
         is_simple_in_parser e
     | Pexp_infix ({txt; _}, e1, e2) ->
         String.length txt > 0
@@ -217,12 +222,12 @@ module Exp = struct
      |Pexp_variant (_, Some _)
      |Pexp_unreachable | Pexp_let _ | Pexp_function _ | Pexp_fun _
      |Pexp_apply _ | Pexp_match _ | Pexp_try _ | Pexp_tuple _
-     |Pexp_unboxed_field _ | Pexp_setfield _ | Pexp_ifthenelse _
-     |Pexp_sequence _ | Pexp_while _ | Pexp_for _ | Pexp_constraint _
-     |Pexp_coerce _ | Pexp_setinstvar _ | Pexp_letmodule _
-     |Pexp_letexception _ | Pexp_assert _ | Pexp_lazy _ | Pexp_poly _
-     |Pexp_newtype _ | Pexp_pack _ | Pexp_letopen _ | Pexp_letop _
-     |Pexp_stack _ | Pexp_beginend _ | Pexp_parens _ | Pexp_cons _ ->
+     |Pexp_setfield _ | Pexp_ifthenelse _ | Pexp_sequence _ | Pexp_while _
+     |Pexp_for _ | Pexp_constraint _ | Pexp_coerce _ | Pexp_setinstvar _
+     |Pexp_letmodule _ | Pexp_letexception _ | Pexp_assert _ | Pexp_lazy _
+     |Pexp_poly _ | Pexp_newtype _ | Pexp_pack _ | Pexp_letopen _
+     |Pexp_letop _ | Pexp_stack _ | Pexp_beginend _ | Pexp_parens _
+     |Pexp_cons _ ->
         false
 end
 
@@ -1657,7 +1662,7 @@ end = struct
     let ctx = Exp exp in
     match exp.pexp_desc with
     | Pexp_constant _ -> Exp.is_trivial exp
-    | Pexp_field _ | Pexp_ident _ | Pexp_send _
+    | Pexp_field _ | Pexp_unboxed_field _ | Pexp_ident _ | Pexp_send _
      |Pexp_construct (_, None)
      |Pexp_variant (_, None) ->
         true
@@ -1838,7 +1843,7 @@ end = struct
       | Pexp_setfield (e0, _, _) when e0 == exp -> Some (Dot, Left)
       | Pexp_setfield (_, _, e0) when e0 == exp -> Some (LessMinus, Non)
       | Pexp_setinstvar _ -> Some (LessMinus, Non)
-      | Pexp_field _ -> Some (Dot, Left)
+      | Pexp_field _ | Pexp_unboxed_field _ -> Some (Dot, Left)
       (* We use [Dot] so [x#y] has the same precedence as [x.y], it is
          different to what is done in the parser, but it is intended. *)
       | Pexp_send _ -> Some (Dot, Left)
@@ -1945,7 +1950,7 @@ end = struct
           prec_ast (Exp e)
       | Pexp_setfield _ -> Some LessMinus
       | Pexp_setinstvar _ -> Some LessMinus
-      | Pexp_field _ -> Some Dot
+      | Pexp_field _ | Pexp_unboxed_field _ -> Some Dot
       | Pexp_send _ -> Some Dot
       | _ -> None )
     | Fp _ -> None
@@ -2590,7 +2595,7 @@ end = struct
         ; _ } )
       when exp == lhs ->
         true
-    | ( Exp {pexp_desc= Pexp_field (e, _); _}
+    | ( Exp {pexp_desc= Pexp_field (e, _) | Pexp_unboxed_field (e, _); _}
       , {pexp_desc= Pexp_construct _ | Pexp_cons _; _} )
       when e == exp ->
         true
@@ -2673,14 +2678,16 @@ end = struct
             , Some
                 ( { pexp_desc=
                       ( Pexp_ident _ | Pexp_constant _ | Pexp_record _
-                      | Pexp_constraint _ | Pexp_field _ )
+                      | Pexp_constraint _ | Pexp_unboxed_field _
+                      | Pexp_field _ )
                   ; _ } as e0 ) )
          |Pexp_record_unboxed_product
             ( _
             , Some
                 ( { pexp_desc=
                       ( Pexp_ident _ | Pexp_constant _ | Pexp_record _
-                      | Pexp_constraint _ | Pexp_field _ )
+                      | Pexp_constraint _ | Pexp_unboxed_field _
+                      | Pexp_field _ )
                   ; _ } as e0 ) )
           when e0 == exp ->
             false
